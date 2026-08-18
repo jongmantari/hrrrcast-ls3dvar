@@ -24,6 +24,72 @@ Current shape:
 For the original manual walkthrough, which is still the best way to debug a new
 account interactively, see [README_aws_mvp.md](README_aws_mvp.md).
 
+## Quick start
+
+Three copy-pasteable paths, one per workflow. Everywhere you see `<account>`,
+substitute your own AWS account ID (`aws sts get-caller-identity --query Account
+--output text`) -- every ARN in this file that shows a real account ID is this
+project's account (334566771276), as an example, not a value to reuse.
+
+**One-off forecast, run and watch it:**
+```
+you (CLI)
+    └─> run_on_ec2.sh --init-time ...
+          └─> RunInstances: one g6e.2xlarge
+                ├─ fetch model + code from S3, run the forecast
+                ├─ stream NetCDF to s3://BUCKET/hrrrcast/out/<date>/<hour>/
+                ├─ write logs + status to s3://BUCKET/hrrrcast/logs/
+                ├─ (optional) SNS email via --notify-topic
+                └─ self-terminate
+```
+```bash
+aws/run_on_ec2.sh --bucket <your-bucket> --preflight-only    # account check, costs nothing
+aws/run_on_ec2.sh --bucket <your-bucket> --init-time 2026-07-20T00
+aws/status.sh                                                 # live instances, delivered output
+```
+Details: [Running a forecast](#running-a-forecast), [Monitoring a run](#monitoring-a-run).
+
+**Hindcast, a date range backfilled cycle by cycle:**
+```
+EventBridge Scheduler  rate(10 minutes)  UTC   -- DISABLED until --enable
+    └─> Lambda  hrrrcast-hindcast-<run-id>
+          ├─ lists s3://BUCKET/hrrrcast/hindcast/<run-id>/status/  (done cycles)
+          ├─ refuses if a HindcastRun=<run-id> instance is already in flight
+          └─> RunInstances for the earliest cycle with no status marker
+                └─> run one cycle, then ALWAYS write a marker (ok / failed(rc=N))
+          (once every cycle has a marker: send completion email, disable self)
+```
+```bash
+aws/deploy_hindcast.sh --bucket <your-bucket> --run-id <run-id> \
+    --start YYYY-MM-DD --end YYYY-MM-DD --lead-hours 24 \
+    --notify-topic arn:aws:sns:us-east-1:<account>:hrrrcast-runs   # stages only: schedule DISABLED, Lambda dry-run
+aws/deploy_hindcast.sh --bucket <your-bucket> --run-id <run-id> --invoke-once   # sanity check
+aws/deploy_hindcast.sh --bucket <your-bucket> --run-id <run-id> --live --enable # go live
+aws s3 ls s3://<your-bucket>/hrrrcast/hindcast/<run-id>/status/                 # which cycles are done
+```
+Details: [Hindcast](#hindcast-serverless-resumable-backfill).
+
+**Hourly production, one cycle launched automatically every hour:**
+```
+EventBridge Scheduler  cron(5 * * * ? *)  UTC   -- DISABLED until --enable
+    └─> Lambda  hrrrcast-hourly-launcher
+          ├─ reads s3://BUCKET/hrrrcast/scheduler/{launch-params.json,user_data.template}
+          ├─ refuses if a run is in flight, the cycle is already produced,
+          │  inputs are incomplete, or the vCPU quota is full
+          └─> RunInstances: one g6e.2xlarge, self-terminating (same as one-off)
+```
+```bash
+GFS_MIN_LAG=4 aws/run_on_ec2.sh --bucket <your-bucket> --stage-scheduler
+aws/deploy_scheduler.sh --bucket <your-bucket>                 # creates role/Lambda/schedule: DISABLED, dry-run
+aws/deploy_scheduler.sh --bucket <your-bucket> --invoke-once    # sanity check
+aws/deploy_scheduler.sh --bucket <your-bucket> --enable --live  # go live
+```
+Details: [Hourly operation](#hourly-operation-eventbridge-scheduler--lambda).
+
+Every path above is disabled/dry-run until you explicitly pass `--live` (and,
+for the scheduled paths, `--enable`) -- nothing launches an instance or spends
+money before that.
+
 ## Account status (account 334566771276, us-east-1)
 
 Provisioned 2026-07-28. Re-verify at any time, for free:
@@ -214,6 +280,12 @@ Two safe modes, and they check different things:
   it to confirm the account is ready, or after changing IAM.
 
 Neither costs anything.
+
+The table above covers what most runs need. `run_on_ec2.sh --help` (or its
+header comment) also documents `--region`, `--subnet-id`,
+`--security-group-ids`, `--instance-profile`, `--volume-size`,
+`--nc-complevel` and `--make-bcs-workers` for non-default networking, IAM, or
+storage tuning.
 
 The launcher packages **your working tree** (not `git archive HEAD`) to a tarball
 in S3 and the instance unpacks that. This is deliberate: it runs exactly the code
@@ -586,6 +658,10 @@ nothing spends money until you say so twice.
 
 ```bash
 # 1. pin the code and a user-data template to S3 (the deploy step)
+# lead hours, bbox, halo etc. for the hourly schedule all come from this
+# staging call -- deploy_scheduler.sh's own --lead-hours flag is accepted for
+# symmetry but ignored (recorded in the schedule description only); re-run
+# this step to change any of those knobs, not deploy_scheduler.sh.
 GFS_MIN_LAG=4 aws/run_on_ec2.sh --bucket mantari-cast1 --stage-scheduler
 
 # 2. create role, Lambda and schedule; disabled, dry-run
@@ -677,7 +753,7 @@ aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-june2026 \
     --start 2026-06-01 --end 2026-06-30 --init-hours 00,06,12,18 \
     --lead-hours 24 --output-hours 0:3:24 \
     --bbox 35.0,-118.77,33.25,-117.0 --halo 80 \
-    --notify-topic arn:aws:sns:us-east-1:334566771276:hrrrcast-runs
+    --notify-topic arn:aws:sns:us-east-1:<account>:hrrrcast-runs
 
 # 2. one manual tick, see what it would launch
 aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-june2026 --invoke-once
@@ -685,8 +761,19 @@ aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-june2026 --invoke-o
 # 3. go live, then turn the schedule on
 aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-june2026 --live --enable
 
-# progress at any time (out of however many cycles the date range enumerates)
+# progress: how many cycles are done, out of however many the date range enumerates
 aws s3 ls s3://mantari-cast1/hrrrcast/hindcast/socal-june2026/status/ | wc -l
+
+# which SPECIFIC cycles are done, and which failed (marker is "ok" or "failed(rc=N)")
+aws s3 ls s3://mantari-cast1/hrrrcast/hindcast/socal-june2026/status/
+for k in $(aws s3 ls s3://mantari-cast1/hrrrcast/hindcast/socal-june2026/status/ | awk '{print $4}'); do
+  echo "$k: $(aws s3 cp s3://mantari-cast1/hrrrcast/hindcast/socal-june2026/status/$k -)"
+done
+
+# which cycle, if any, is running right now (tagged on the EC2 instance)
+aws ec2 describe-instances --filters Name=tag:HindcastRun,Values=socal-june2026 \
+    Name=instance-state-name,Values=pending,running \
+    --query 'Reservations[].Instances[].{Id:InstanceId,InitTime:Tags[?Key==`InitTime`]|[0].Value,State:State.Name}'
 
 # stop / resume later / remove the launcher only (S3 state and outputs are kept)
 aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-june2026 --disable

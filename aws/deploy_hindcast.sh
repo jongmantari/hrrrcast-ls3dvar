@@ -32,19 +32,23 @@
 # hindcast.
 #
 # Usage:
-#   aws/deploy_hindcast.sh --bucket NAME --run-id ID --bbox N,W,S,E \
-#       --start YYYY-MM-DD --end YYYY-MM-DD [options]
+#   aws/deploy_hindcast.sh --bucket NAME --run-id ID \
+#       --start YYYY-MM-DD --end YYYY-MM-DD [--bbox N,W,S,E] [options]
 #
 # Required (on first deploy; omit --start/--end/--bbox on a later
 # --invoke-once/--enable/--disable/--delete against an existing run-id):
 #   --bucket NAME          S3 bucket for outputs, logs and hindcast state
 #   --run-id ID            identifies this hindcast's S3 prefix, Lambda,
 #                          schedule and EC2 tag (e.g. "socal-june2026")
-#   --bbox N,W,S,E         region to crop the forecast to
 #   --start YYYY-MM-DD     first cycle date (UTC), inclusive
 #   --end YYYY-MM-DD       last cycle date (UTC), inclusive
 #
 # Options (defaults in brackets):
+#   --bbox N,W,S,E         crop the forecast to this region + --halo cells
+#                          [full domain]. Full domain needs a real GPU
+#                          (g6e.2xlarge, the default here) and costs roughly
+#                          full-domain-per-cycle x N cycles -- see the cost
+#                          table in README_aws.md before a long date range.
 #   --init-hours LIST      comma list of UTC init hours              [00,06,12,18]
 #   --lead-hours N         forecast length per cycle                 [24]
 #   --output-hours SPEC    only keep these lead hours ("start:step:end" or a
@@ -156,10 +160,13 @@ fi
 NEEDS_FULL_CONFIG="NO"
 aws lambda get-function --function-name "$FUNCTION" --region "$REGION" >/dev/null 2>&1 || NEEDS_FULL_CONFIG="YES"
 if [ "$NEEDS_FULL_CONFIG" == "YES" ] || [ -n "$START_DATE$END_DATE$BBOX" ]; then
-    [ -n "$BBOX" ]       || die "--bbox N,W,S,E is required"
     [ -n "$START_DATE" ] || die "--start YYYY-MM-DD is required"
     [ -n "$END_DATE" ]   || die "--end YYYY-MM-DD is required"
 fi
+# --bbox is optional: empty means full domain, same convention run_cycle.sh and
+# run_on_ec2.sh already use. A full-domain hindcast needs a real GPU (g6e.2xlarge,
+# the default here) and costs roughly full-domain-per-cycle x N cycles -- check
+# the per-cycle cost in README_aws.md before committing to a long date range.
 
 # --- validate and enumerate cycles -------------------------------------------
 if [ -n "$START_DATE$END_DATE" ]; then
@@ -204,6 +211,11 @@ if [ -n "$START_DATE$END_DATE$BBOX" ]; then
     # (a real thing that happened during testing) silently collide there. Every
     # hindcast gets its own out/ under its own run-id prefix instead.
     HINDCAST_S3_OUTPUT="s3://${BUCKET}/${HINDCAST_PREFIX}/out"
+    if [ -n "$BBOX" ]; then
+        DOMAIN_DESC="bbox ${BBOX} + ${HALO}-cell halo"
+    else
+        DOMAIN_DESC="full domain"
+    fi
 
     log "Staging code + user-data template to s3://${BUCKET}/${STAGE_PREFIX}/"
     log "Output prefix: ${HINDCAST_S3_OUTPUT}/ (isolated per run-id, not the shared hrrrcast/out/)"
@@ -371,6 +383,7 @@ cat <<EOF
 
   hindcast run-id  ${RUN_ID}
   cycles           ${N_CYCLES:-<unchanged>}
+  domain           ${DOMAIN_DESC:-<unchanged>}
   schedule         ${SCHEDULE}   ${RATE}  UTC   state=${FINAL_STATE}
   function         ${FUNCTION}   dry_run=$([ "$LIVE" == "YES" ] && echo NO || echo YES)
   role             ${ROLE} (shared)

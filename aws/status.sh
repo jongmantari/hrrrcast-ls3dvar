@@ -141,10 +141,10 @@ c=json.load(sys.stdin)
 print(f\"{c['start_date']}..{c['end_date']} @ {','.join(c['init_hours'])}Z\")" 2>/dev/null || echo "?")"
             DOMAIN="$(printf '%s' "$CFG" | python3 -c "import json,sys
 c=json.load(sys.stdin)
-print(f\"bbox {c['bbox']} +{c['halo']}\")" 2>/dev/null || echo "?")"
+print(f\"bbox {c['bbox']} +{c['halo']}\" if c.get('bbox') else 'full domain')" 2>/dev/null || echo "?")"
         fi
 
-        STATUS_LIST="$(aws s3 ls "s3://${BUCKET}/${PREFIX}/status/" 2>/dev/null | awk '{print $4}')"
+        STATUS_LIST="$(aws s3 ls "s3://${BUCKET}/${PREFIX}/status/" 2>/dev/null | awk '{print $4}' || true)"
         # _complete.txt is the Lambda's own "already notified" marker, not a
         # cycle -- excluded from the count, same as hindcast_handler.py's own
         # done_cycles() does.

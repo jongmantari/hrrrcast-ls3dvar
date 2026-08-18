@@ -242,37 +242,45 @@ if [ "$DRY_RUN" == "NO" ]; then
     write on s3://${BUCKET}/hrrrcast/, and ec2:TerminateInstances on itself."
     echo "  instance profile: ${INSTANCE_PROFILE}"
 
-    # GPU vCPU quota. A g5.2xlarge needs 8 vCPUs of "Running On-Demand G and VT
-    # instances"; the account default is often exactly 8, so a larger type or a
-    # second concurrent run fails at run-instances with an opaque error. Check
-    # here where the message can be useful.
-    VCPU_NEED="$(aws ec2 describe-instance-types --instance-types "$INSTANCE_TYPE" \
-        --query 'InstanceTypes[0].VCpuInfo.DefaultVCpus' --output text 2>/dev/null || echo unknown)"
-    VCPU_QUOTA="$(aws service-quotas get-service-quota --service-code ec2 \
-        --quota-code L-DB2E81BA --query 'Quota.Value' --output text 2>/dev/null || echo unknown)"
-    echo "  ${INSTANCE_TYPE} needs ${VCPU_NEED} vCPU; G/VT on-demand quota is ${VCPU_QUOTA}"
-    if [ "$VCPU_NEED" != "unknown" ] && [ "$VCPU_QUOTA" != "unknown" ]; then
-        awk -v n="$VCPU_NEED" -v q="$VCPU_QUOTA" 'BEGIN{exit !(n>q)}' \
-            && die "${INSTANCE_TYPE} needs ${VCPU_NEED} vCPU but the G/VT on-demand quota is ${VCPU_QUOTA}.
+    # GPU vCPU quota and in-flight instances only matter for an actual
+    # RunInstances call. --stage-scheduler never launches anything itself (it
+    # just uploads code + a template to S3), so it has no reason to block on
+    # another hindcast's or another run's instance still winding down.
+    if [ "$STAGE_SCHEDULER" == "NO" ]; then
+        # GPU vCPU quota. A g5.2xlarge needs 8 vCPUs of "Running On-Demand G and VT
+        # instances"; the account default is often exactly 8, so a larger type or a
+        # second concurrent run fails at run-instances with an opaque error. Check
+        # here where the message can be useful.
+        VCPU_NEED="$(aws ec2 describe-instance-types --instance-types "$INSTANCE_TYPE" \
+            --query 'InstanceTypes[0].VCpuInfo.DefaultVCpus' --output text 2>/dev/null || echo unknown)"
+        VCPU_QUOTA="$(aws service-quotas get-service-quota --service-code ec2 \
+            --quota-code L-DB2E81BA --query 'Quota.Value' --output text 2>/dev/null || echo unknown)"
+        echo "  ${INSTANCE_TYPE} needs ${VCPU_NEED} vCPU; G/VT on-demand quota is ${VCPU_QUOTA}"
+        if [ "$VCPU_NEED" != "unknown" ] && [ "$VCPU_QUOTA" != "unknown" ]; then
+            awk -v n="$VCPU_NEED" -v q="$VCPU_QUOTA" 'BEGIN{exit !(n>q)}' \
+                && die "${INSTANCE_TYPE} needs ${VCPU_NEED} vCPU but the G/VT on-demand quota is ${VCPU_QUOTA}.
     Request an increase for 'Running On-Demand G and VT instances' (quota L-DB2E81BA) in ${REGION},
     or choose a smaller type."
-    fi
+        fi
 
-    # In-flight runs hold their vCPUs until they reach `terminated`, including
-    # while `shutting-down`. With a quota of exactly one g5.2xlarge, launching
-    # while a previous run winds down fails with a bare VcpuLimitExceeded, which
-    # does not hint that the fix is simply to wait. Say so here instead.
-    INFLIGHT="$(aws ec2 describe-instances \
-        --filters "Name=tag:Project,Values=hrrrcast" \
-                  "Name=instance-state-name,Values=pending,running,shutting-down,stopping" \
-        --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text 2>/dev/null || true)"
-    if [ -n "$INFLIGHT" ]; then
-        printf '\033[1;33mWARNING:\033[0m other hrrrcast instances are still holding vCPU quota:\n%s\n' "$INFLIGHT"
-        die "Wait for these to reach 'terminated', then relaunch. A shutting-down instance still counts
+        # In-flight runs hold their vCPUs until they reach `terminated`, including
+        # while `shutting-down`. With a quota of exactly one g5.2xlarge, launching
+        # while a previous run winds down fails with a bare VcpuLimitExceeded, which
+        # does not hint that the fix is simply to wait. Say so here instead.
+        INFLIGHT="$(aws ec2 describe-instances \
+            --filters "Name=tag:Project,Values=hrrrcast" \
+                      "Name=instance-state-name,Values=pending,running,shutting-down,stopping" \
+            --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text 2>/dev/null || true)"
+        if [ -n "$INFLIGHT" ]; then
+            printf '\033[1;33mWARNING:\033[0m other hrrrcast instances are still holding vCPU quota:\n%s\n' "$INFLIGHT"
+            die "Wait for these to reach 'terminated', then relaunch. A shutting-down instance still counts
     against the G/VT vCPU quota (currently ${VCPU_QUOTA}), so this launch would fail with
     VcpuLimitExceeded. Watch with:
       aws ec2 describe-instances --filters Name=tag:Project,Values=hrrrcast \\
         --query 'Reservations[].Instances[].[InstanceId,State.Name]' --output text"
+        fi
+    else
+        echo "  (skipping vCPU-quota / in-flight checks: --stage-scheduler doesn't launch anything)"
     fi
 
     if [ "$PREFLIGHT_ONLY" == "YES" ]; then
