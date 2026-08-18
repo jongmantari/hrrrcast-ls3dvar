@@ -3,6 +3,12 @@
 # aws/launch_hindcast.sh — launch a multi-cycle HRRRCast hindcast on one
 # continuously-running EC2 instance.
 #
+# HISTORICAL / non-serverless alternative: superseded by the serverless
+# deploy_hindcast.sh + aws/lambda/hindcast_handler.py path (see the "Hindcast"
+# section of README_aws.md), which resumes across interruptions via S3 status
+# markers instead of needing one instance to survive the whole date range.
+# Kept as a working non-serverless reference, not the primary path.
+#
 # Thin wrapper over run_on_ec2.sh, same pattern as aws/run_domain_test.sh: it
 # reuses the whole proven bootstrap (code tarball, conda env, log shipping, AZ
 # walk, self-termination) and swaps in aws/run_hindcast.sh via --run-cmd, which

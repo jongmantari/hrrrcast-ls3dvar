@@ -2,6 +2,10 @@
 #
 # aws/domain_test.sh — full-domain vs subdomain inference, on ONE instance.
 #
+# HISTORICAL: this was a one-off cost/fidelity investigation, not ongoing
+# infrastructure. Its conclusion is documented in the "Subdomain inference"
+# section of README_aws.md. Kept as a reference for how the comparison was run.
+#
 # Answers one question: does running HRRRCast on a cropped domain give a usable
 # forecast, and how much cheaper is it?
 #

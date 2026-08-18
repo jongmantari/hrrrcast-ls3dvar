@@ -124,9 +124,11 @@ each) can run concurrently. The constraint that remains is capacity, not quota:
 clear message rather than letting `run-instances` fail opaquely. With 32 vCPU on `L-DB2E81BA` there is now room to fall back to a larger type when
 capacity is short, which given the scarcity above is the more useful freedom.
 
-Do not reuse the pre-existing `hrrrcast-ssm` profile: it carries only
-`AmazonSSMManagedInstanceCore`, so a run using it could neither fetch the model
-nor terminate itself.
+A pre-existing `hrrrcast-ssm` role/profile used to sit here as a trap: it
+carried only `AmazonSSMManagedInstanceCore`, so a run using it could neither
+fetch the model nor terminate itself. Nothing in this repo ever defaulted to
+or referenced it, so it was deleted outright (2026-08-18) rather than left as
+a warning to avoid.
 
 ### The `hrrrcast-runner` role
 
@@ -613,6 +615,18 @@ the bottleneck, drop it to 0.
 
 ## Hourly operation (EventBridge Scheduler → Lambda)
 
+> **This is not the live operational path.** In production, `wx-forecast-launcher`
+> (a separate repo) vendors this repo's code directly (tar + S3, not a git clone)
+> and calls `run_cycle.sh` itself from its own EC2 runner, on its own SoCal/CONUS
+> schedules -- it never invokes `hrrrcast-hourly-launcher` or this schedule at
+> all. `hrrrcast-hourly`/`hrrrcast-hourly-launcher` below are a genuine,
+> standalone way to run this pipeline on its own hourly cadence (e.g. for
+> testing this repo in isolation, or a future deployment that doesn't go
+> through wx-forecast-launcher), kept deliberately since it's real working
+> infrastructure -- just not what's actually running right now (currently
+> `DISABLED`). Do not assume enabling it duplicates or conflicts with
+> wx-forecast-launcher's own schedules; they don't share any AWS resources.
+
 ```
 EventBridge Scheduler  cron(5 * * * ? *)  UTC
     └─> Lambda  hrrrcast-hourly-launcher        (aws/lambda/handler.py)
@@ -742,6 +756,39 @@ instance's own `--notify-topic` failure email fires exactly as it would for a
 single on-demand run, with no separate per-cycle notification code needed.
 Once every cycle has a marker, the Lambda sends one completion summary and
 disables its own schedule.
+
+### Deployed hindcast runs
+
+Every `hrrrcast-hindcast-*` Lambda/schedule below is the **same code**
+(`aws/lambda/hindcast_handler.py`), deployed once per `--run-id` -- there is
+no per-experiment source, just a different `config.json` staged to
+`s3://mantari-cast1/hrrrcast/hindcast/<run-id>/config.json`. All are currently
+`DISABLED` (done or paused, not deleted -- state and output stay in S3 either
+way). Redeploy any of them with the `deploy_hindcast.sh` invocation shown;
+`--start`/`--end`/`--bbox` etc. are only required on first deploy or when
+changing them, per `deploy_hindcast.sh`'s own usage comment.
+
+| run-id | purpose | region | dates | init hours | lead | gfs lag | cycles |
+|---|---|---|---|---|---|---|---|
+| `socal-june2026` | First full-month SoCal hindcast attempt | bbox `35.0,-118.77,33.25,-117.0` + halo 40 | 2026-06-01..06-30 | 00/06/12/18Z | 24h | 4h | 120/120 done |
+| `socal-june2026-01` | Re-run of the above at `gfs_min_lag=0` instead of 4, half the month | same bbox/halo | 2026-06-01..06-15 | 00/06/12/18Z | 24h | 0h | 60/60 done |
+| `conus-june2026` | Full-domain CONUS counterpart to `socal-june2026-01` | full domain | 2026-06-01..06-15 | 00/06/12/18Z | 24h | 0h | 60/60 done |
+| `conus-june-01` | Earlier full-domain CONUS attempt, narrower date range | full domain | 2026-06-01..06-07 | 00/06/12/18Z | 24h | 0h | 0/28 -- Lambda was left `HRRRCAST_DRY_RUN=YES` the whole time, so its schedule firing every 10 minutes (caught and disabled 2026-08-18) never actually launched anything |
+| `socal-test-2cycle` | Quick 2-cycle smoke test of the serverless hindcast pipeline itself | bbox + halo 80 | 2026-07-29 (1 day) | 00/06Z | 24h | 0h | 2/2 done |
+| `socal-icbc-lag0` | ICBC (initial/boundary condition) lag sensitivity test: freshest GFS | bbox + halo 80 | 2026-08-03 (1 day) | 00/06/12/18Z | 24h | 0h | 4/4 done |
+| `socal-icbc-lag6` | Same as above, paired comparison at a 6h GFS lag | bbox + halo 80 | 2026-08-03 (1 day) | 00/06/12/18Z | 24h | 6h | 4/4 done |
+
+To redeploy e.g. `socal-icbc-lag0` (params from its own `config.json`, shown
+for a concrete example -- adjust `--run-id`/params for any other row above):
+
+```bash
+aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-icbc-lag0 \
+    --start 2026-08-03 --end 2026-08-03 --init-hours 00,06,12,18 \
+    --lead-hours 24 --output-hours 3,6,12,24 --gfs-min-lag 0 \
+    --bbox 35.0,-118.77,33.25,-117.0 --halo 80 \
+    --notify-topic arn:aws:sns:us-east-1:<account>:hrrrcast-runs
+aws/deploy_hindcast.sh --bucket mantari-cast1 --run-id socal-icbc-lag0 --enable --live
+```
 
 ### Deploying it
 

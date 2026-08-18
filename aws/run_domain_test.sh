@@ -2,6 +2,10 @@
 #
 # aws/run_domain_test.sh — launch the full-domain vs subdomain comparison.
 #
+# HISTORICAL: launcher for the one-off investigation in aws/domain_test.sh.
+# Its conclusion is documented in README_aws.md's "Subdomain inference"
+# section; not ongoing infrastructure.
+#
 # Thin wrapper over run_on_ec2.sh: it reuses the whole proven bootstrap (code
 # tarball, conda env from the lock, log shipping, AZ walk, self-termination) and
 # only swaps the command the instance runs, via --run-cmd. See aws/domain_test.sh

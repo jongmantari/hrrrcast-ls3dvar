@@ -2,6 +2,10 @@
 #
 # aws/run_hindcast.sh — run many HRRRCast cycles back to back, on one instance.
 #
+# HISTORICAL / non-serverless alternative: superseded by the serverless
+# deploy_hindcast.sh + aws/lambda/hindcast_handler.py path (see the "Hindcast"
+# section of README_aws.md). Invoked by aws/launch_hindcast.sh, not directly.
+#
 # One-off on-demand runs launch a fresh instance per cycle (aws/run_on_ec2.sh);
 # a hindcast over weeks/months of history does not want that (per-instance
 # bootstrap and AMI/env setup would dominate the bill). This instead loops
