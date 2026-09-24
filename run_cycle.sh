@@ -386,6 +386,17 @@ run_input_stages() {
     fi
 }
 
+run_da_injection() {
+
+    run_stage inject-da \
+        python3 \
+        "${PACKAGEROOT}/src/inject_da_npz.py" \
+        --config "${DA_CONFIG:?DA_CONFIG not set}" \
+        --fcst-root "${FCST_ROOT}" \
+        --init-time "${INIT_TIME}"
+
+}
+
 FCST_CMD=(python3 "${PACKAGEROOT}/src/fcst.py" "${MODEL}" "${INIT_TIME}" "${LEAD_HOUR}"
           --num_members "${N_ENSEMBLES}" --members "${MEMBER_RANGE}"
           --batch_size "${BATCH_SIZE}" --log_level "${LOG_LEVEL}"
@@ -413,9 +424,14 @@ if [ "$OVERLAP_FCST" == "YES" ]; then
 
     run_input_stages
 
-    log "Inputs ready; releasing the forecast"
-    touch "$READY"
+    #
+    # Replace HRRR NPZ with JEDI analysis NPZ
+    #
+    run_da_injection
 
+    log "Inputs ready; releasing the forecast"
+    touch "$READY"    
+    
     if wait "$FCST_PID"; then
         trap - EXIT INT TERM; FCST_PID=""
         log "Stage fcst complete (see ${DATAROOT}/logs/fcst.out)"
@@ -426,6 +442,11 @@ if [ "$OVERLAP_FCST" == "YES" ]; then
     fi
 else
     run_input_stages
+
+    #
+    # Replace HRRR NPZ with JEDI analysis NPZ
+    #
+    run_da_injection
 
     # --- Stage 5: forecast  (depends on make-ics + make-bcs) ---------------
     run_stage fcst "${FCST_CMD[@]}"
