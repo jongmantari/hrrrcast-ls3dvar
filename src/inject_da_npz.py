@@ -97,7 +97,7 @@ def main():
     #
     experiment_root = Path(
         da_cfg["experiment_root"]
-    )
+    ).expanduser()
 
     experiment_name = da_cfg[
         "experiment_name"

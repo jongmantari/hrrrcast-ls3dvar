@@ -25,3 +25,11 @@ dependencies:
   - cf-units
   - grib2io
   - scikit-image
+  # wgrib2 must be solved together with tensorflow==2.15.0 in this same
+  # environment.yaml, not installed later with a separate `conda/mamba
+  # install -n hrrrcast wgrib2`: adding it to an already-solved env let the
+  # solver silently bump tensorflow to 2.17.0 to satisfy a transitive C
+  # library version, and 2.17's Keras cannot deserialize a .keras model
+  # saved under 2.15's module layout (keras.src.engine.functional), so
+  # inference fails with "Could not deserialize class 'Functional'".
+  - wgrib2
