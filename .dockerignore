@@ -1,0 +1,29 @@
+.git
+**/.git
+**/__pycache__
+**/*.pyc
+**/.ipynb_checkpoints
+# data and outputs: mounted at /data
+runs/
+data/
+obsdb/
+outputs/
+**/*.npz
+**/*.nc
+**/*.nc4
+**/*.grib2
+**/*.grb2
+**/*.h5
+**/*.zarr
+# weights: mounted at /models
+models/
+**/*.keras
+**/*.ckpt*
+# secrets
+**/.env
+**/*.pem
+**/credentials*
+.aws/
+net-diffusion/
+**/*.pt
+docker/README.md

@@ -1,0 +1,96 @@
+# LS-3DVar analysis base config (blocks control vector, no PCA) for run_cycles.
+# Per-cycle keys (hrrr_npz, gfs_npz, providers, outputs.directory, cycling) are set by run_cycles.
+# Upper-case placeholders are filled in by docker/entrypoint.sh.
+lead_hour: 1
+forecast_engine:
+  type: hrrrcast
+  model_path: ${MODELS}/model.keras
+  use_diffusion: true
+  num_members: 1
+  member: 0
+normalize_stats_nc: ${MODELS}/normalize-stats.nc
+channel_stats: {}
+observations:
+  variables:
+  - airTemperatureAt2M
+  - dewPointTemperatureAt2M
+  - stationPressure
+  - windEastwardAt10M
+  - windNorthwardAt10M
+  interpolation: nearest
+  wind_rotation: grid
+  pressure_height_correction: true
+  temperature_height_correction:
+    enabled: false
+    t2m_lapse_k_per_km: 6.5
+    d2m_lapse_k_per_km: 1.8
+  time_window:
+    enabled: true
+    half_width_minutes: 30
+    thinning: nearest
+    keep_untimed: false
+ls3dvar:
+  enabled: true
+  control_vector: blocks
+  outer_loops: 1
+  max_iterations: 40
+  blocks:
+  - {var: T2M,  sigma: 0.4,  L: 10, mask: land}
+  - {var: D2M,  sigma: 1.2,  L: 10, mask: land}
+  - {var: PRES, sigma: 40.0, L: 10, mask: none}
+  - {var: U10,  sigma: 1.5,  L: 10, mask: land}
+  - {var: V10,  sigma: 1.5,  L: 10, mask: land}
+  - {var: REFC, sigma: 15.0, L: 2,  mask: none}
+  holdout_stations: ${HOLDOUT}
+  holdout: 0.0
+  seed: 0
+  sigma_b: 10.0
+  minimum_observation_error: 0.5
+  observation_errors:
+    airTemperatureAt2M: 1.5
+    dewPointTemperatureAt2M: 1.5
+    stationPressure: 50.0
+    windEastwardAt10M: 2.0
+    windNorthwardAt10M: 2.0
+  obs_qc:
+    enabled: true
+    blacklist: {stations: [], networks: {}}
+    network_check: {k: 3.0}
+    buddy: {radius_km: 75.0, min_buddies: 2, k: 2.0, max_reject_fraction: 0.2}
+    error_scale: {asos: 1.0, tempest: 1.5, grenade: 1.0}
+  observation_filter:
+    enabled: true
+    type: innovation
+    thresholds:
+      airTemperatureAt2M: 10.0
+      dewPointTemperatureAt2M: 15.0
+      stationPressure: 300.0
+      windEastwardAt10M: 10.0
+      windNorthwardAt10M: 10.0
+  bias_correction:
+    enabled: false
+    airTemperatureAt2M: false
+    dewPointTemperatureAt2M: false
+    stationPressure: false
+  pseudo_obs:
+    enabled: true
+    box: 2
+    channels:
+    - {var: REFC, error: 3.0, floor: 0.0}
+  insert: {channels: [], weight: 1.0}
+  refc_source:
+    source: mrms
+    dir: ${DATA}/mrms/${DOMAIN}
+    field: refc_t_mean
+  stop_rel_dj: 0.005
+background_weight: 1.0
+observation_weight: 1.0
+optimizer: {type: lbfgs, max_iterations: 100, tolerance: 1.0e-08}
+outputs:
+  save_latent: true
+  save_analysis_npz: true
+  save_background_netcdf: false
+  save_analysis_netcdf: false
+  save_increment_netcdf: false
+  save_coefficients: true
+compare_to_operational: false

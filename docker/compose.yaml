@@ -1,0 +1,29 @@
+# Laptop (WSL2 + NVIDIA Container Toolkit) and AWS GPU instance: same file.
+#   export MODELS_DIR=... DATA_DIR=...            (see docker/README.md)
+#   docker compose -f docker/compose.yaml run --rm ls3dvar check
+#   DOMAIN=fl_panhandle docker compose -f docker/compose.yaml run --rm ls3dvar cycle 2026-11-24T12 2026-11-24T14
+services:
+  ls3dvar:
+    image: ${IMAGE:-hrrrcast-ls3dvar:latest}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"     # write /data as the host user
+    environment:
+      DOMAIN: ${DOMAIN:-socal}
+      HOLDOUT: ${HOLDOUT:-null}
+      LEADS: ${LEADS:-[1, 2, 3]}
+      ASOS_SKIP_SYNC: ${ASOS_SKIP_SYNC:-}
+      SKIP_PREP: ${SKIP_PREP:-}
+    volumes:
+      - ${MODELS_DIR:?set MODELS_DIR to the net-diffusion folder (model.keras, normalize-stats.nc)}:/models:ro
+      - ${DATA_DIR:?set DATA_DIR to a host folder for runs/obsdb/mrms/ioda/experiments}:/data
+      - ${NV_CACHE:-~/.nv/ComputeCache}:/cache/nv     # reuse compiled Blackwell kernels (else ~30 min first run)
+    shm_size: 8g
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

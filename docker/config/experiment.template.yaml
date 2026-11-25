@@ -1,0 +1,65 @@
+# run_cycles experiment, rendered per run by docker/entrypoint.sh (upper-case placeholders filled in;
+# lower-case ones are run_cycles' own path references). Inputs are staged by the entrypoint, so prep is off.
+experiment:
+  name: ${EXP_NAME}
+  start: ${START_ISO}
+  end:   ${END_ISO}
+  output_dir: ${DATA}/experiments/${DOMAIN}
+  resume: true
+  code: ls3dvar
+  deterministic: false
+paths:
+  data: ${DATA}
+  reference_dir: ${DATA}/runs/${DOMAIN}/reference/hrrr_ana
+  obsdb_root: ${DATA}/obsdb/${DOMAIN}
+  configs: ${HRRRCAST_REPO}/docker/config
+background:
+  first_cycle: reference_forecast
+  source: cycled
+  forecast_dir: null
+  lead: 1
+  blend:
+    enabled: false
+    args: "--cutoff-km 1000 --pmax 850 --weight 1.0"
+observations:
+  types: ${OBS_TYPES}
+  holdout_stations: ${HOLDOUT}
+analysis:
+  enabled: true
+  base_config: ${ANALYSIS_CONFIG}
+  overrides: {}
+  extra_args: ""
+  truth: true
+forecast:
+  enabled: true
+  leads: ${LEADS}
+  from: [an, bg]
+verification:
+  enabled: ${VERIFY}
+  qc: true
+  config: null
+runtime:
+  step_timeout: 900
+  analysis_timeout: 1800
+  retries: 3
+  retry_wait: 20
+  python: null
+  progress: iterations
+  env:
+    CUDA_CACHE_MAXSIZE: "4294967296"
+    TF_FORCE_GPU_ALLOW_GROWTH: "true"
+  prep_timeout: 0
+  post_timeout: 0
+prep:
+  reference: {enabled: false}
+  obs: {enabled: false}
+  mrms: {enabled: false}
+  background: {enabled: false}
+post:
+  dir: null
+  plots: {enabled: false}
+  fields: {enabled: false}
+  diagnostics: {enabled: false}
+  threat: {enabled: false}
+push:
+  enabled: false
