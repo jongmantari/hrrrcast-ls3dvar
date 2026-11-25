@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.bak*
+*.egg-info/
+*.npz
+*.nc
+*.grib2
+*.log
+*~

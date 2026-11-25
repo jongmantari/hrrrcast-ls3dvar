@@ -1,0 +1,175 @@
+# =============================================================================
+# LS-3DVar cycling experiment: every key of run_cycles.py, with its default.
+#
+#   python -m ls3dvar.cli.run_cycles check   this.yaml
+#   python -m ls3dvar.cli.run_cycles run     this.yaml --detach
+#   python -m ls3dvar.cli.run_cycles status | tail | stop | results  this.yaml
+#
+# ${name} is replaced by a `paths:` entry (or an environment variable), anywhere.
+# Unknown keys are an error (typos do not silently fall back to defaults).
+# =============================================================================
+
+experiment:
+  name: frozen_v1_pkg                 # output: <output_dir>/<name>/
+  start: 2026-08-11T00                # first cycle (UTC, YYYY-MM-DDTHH)
+  end:   2026-08-11T03                # last cycle
+  output_dir: ${data}/experiments
+  resume: true                        # skip finished steps. Refused if the folder was made with
+                                      #   other settings or code (start/end/runtime may change)
+  code: ls3dvar                       # ls3dvar (package) | mantari (old modules, parity runs)
+  deterministic: false                # false = plain TF: run-to-run noise up to ~0.4 points of
+                                      #   improvement; true = bit-reproducible (~1.5x slower;
+                                      #   use for parity checks and A/B tests of small changes)
+
+paths:                                # free-form; other sections refer to these as ${name}
+  data: /home/jonggyunkim/runs/s3/HRRRCast-live
+  reference_dir: ${data}/reference/hrrr_ana   # <dir>/YYYYMMDDTHHZ/{hrrr,gfs}_YYYYMMDD_HH.npz
+  obsdb_root: ${data}/obsdb                   # <root>/<type>/YYYYMMDDTHHZ/*.nc4
+  configs: ${data}/configs
+
+background:
+  first_cycle: reference_forecast     # background of the FIRST cycle:
+                                      #   reference_forecast  F01 from the reference HRRR analysis at H-1
+                                      #   forecast_dir        <forecast_dir>/<H-lead>/fcst_f<lead>.npz
+  source: cycled                      # background of LATER cycles:
+                                      #   cycled              F01 from the previous cycle's analysis
+                                      #                       (no analysis: from its background F01)
+                                      #   reference_forecast  cold start every cycle (no cycling)
+                                      #   forecast_dir        precomputed forecasts (run_forecasts.py)
+  forecast_dir: null                  # e.g. ${data}/forecasts/ref_f03  (from run_forecasts.py)
+  lead: 1                             # forecast_dir lead [h] used as background
+  blend:
+    enabled: false                    # large-scale blend toward GFS at H (upper air, p <= 850 hPa)
+    args: "--cutoff-km 1000 --pmax 850 --weight 1.0"
+
+observations:                         # what the cycle feeds into the analysis
+  types: [asos, tempest, grenade]     # obsdb sub-folders, one provider each
+  holdout_stations: "0/5"             # stations with crc32(id) % 5 == 0 are never assimilated and
+                                      #   scored separately; null = assimilate all
+  # how obs are processed (time window, height corrections, wind frame, QC, errors) is part of the
+  # analysis config: set it in analysis.overrides.observations / analysis.overrides.ls3dvar
+
+analysis:
+  enabled: true                       # false: no analysis (free-running background / forecasts only)
+  base_config: ${configs}/frozen_v1/test.yaml   # ls3dvar:, observations:, model paths
+  overrides:                          # deep-merged on top of base_config (any key), e.g.
+    {}
+    # ls3dvar:
+    #   sigma_b: [5]
+    #   blocks: ["T2M:0.6:10:land", "D2M:1.2:10:land"]
+    #   outer_loops: 1                # the 2nd loop gained < 0.1% J on 12 Aug (restart only)
+    #   stop_rel_dj: 5.0e-3           # stop when the best J gains < 0.5% over stop_window evals
+    #   stop_window: 5
+    #   stop_reduction: null          # e.g. 0.9: stop at 90% J reduction (case dependent:
+    #                                 #   12 Aug 19Z stopped early, 20Z never reached it)
+    # observations:
+    #   time_window: {half_width_minutes: 20}
+  extra_args: ""                      # extra command-line flags (override the config), e.g. "--outer 1"
+  truth: true                         # pass the reference analysis at H (--truth-npz: diagnostics only)
+
+forecast:
+  enabled: true
+  leads: [1, 2, 3]                    # [h], 1..6. Cycling (source: cycled) always makes F01 from an
+  from: [an, bg]                      # an = from the analysis, bg = from the background (no-DA control)
+
+verification:
+  enabled: true                       # lead 0 at H and lead L at H+L, vs obs and the reference analysis
+  qc: true                            # score with the analysis QC (same obs for an and bg)
+  config: null                        # one scoring config for experiments you compare
+                                      #   (null = each cycle's own analysis config)
+
+runtime:
+  step_timeout: 900                   # [s] a hung step is killed (process group) ...
+  analysis_timeout: 1800              # [s] the same for the analysis step (2 outer loops x 40
+                                      #   iterations: ~3.5 min on AC power, ~10x that on battery)
+  retries: 3                          # ... and retried (analysis, forecasts)
+  retry_wait: 20                      # [s]
+  python: null                        # python for the steps (null = the one running run_cycles)
+  progress: iterations                # what run.log shows while the analysis runs:
+                                      #   iterations  obs counts, every L-BFGS iteration, O-B -> O-A
+                                      #   outer       obs counts, outer loops, O-B -> O-A
+                                      #   quiet       only the O-B -> O-A summary afterwards (bash cycle)
+  env:                                # added to the steps' environment
+    CUDA_CACHE_MAXSIZE: "4294967296"  # PTX-JIT cache for the Blackwell GPU (avoids long stalls)
+    TF_FORCE_GPU_ALLOW_GROWTH: "true"
+  prep_timeout: 0                     # [s] per prep script call (0 = no limit; stage_reference.sh
+                                      #   runs one HRRRCast forecast per missing hour)
+  post_timeout: 0                     # [s] per post script (0 = no limit)
+
+# -----------------------------------------------------------------------------------------------
+# prep: inputs, made by the data-directory scripts for the hours this experiment needs.
+#   python -m ls3dvar.cli.run_cycles prep exp.yaml [--only reference obs mrms] [--dry-run]
+#   python -m ls3dvar.cli.run_cycles pipeline exp.yaml      (prep -> cycles -> post)
+# Hours present are skipped. Missing hours that only verification needs give a warning;
+# missing hours the cycles need stop the run before any cycle.
+#   reference  start-1 .. end+max(lead)    obs, mrms  start .. end+max(lead)
+# -----------------------------------------------------------------------------------------------
+prep:
+  reference:
+    enabled: false
+    script: ${data}/stage_reference.sh      # REF_ROOT = parent of paths.reference_dir (.../hrrr_ana)
+    run_missing: true                       # false: --no-run (link staged subrun/ hours only)
+    copy: false                             # true: replace the script's links into subrun/ by
+                                            #   copies (self-contained data folder, e.g. for S3)
+    env: {}                                 # e.g. {RUN_BASE: /other/base} -> recompute into a new subrun/
+  obs:
+    enabled: false
+    script: ${data}/build_obsdb_cycles.py   # called with --start --end --types --output-root
+    config: ${data}/obsdb_cycles.yaml       # raw IODA dirs, window, domain, obs errors
+    python: null                            # needs netCDF4 (null = runtime.python)
+  mrms:
+    enabled: false
+    via: mrms_stage                         # mrms_stage | obsdb: build_obsdb_cycles.py --types <dir name>
+                                            #   (its `mrms:` obs type, kind: mrms) into dir's parent
+    script: ${data}/mrms_stage.py           # NOAA bucket download (network), --grid-npz added
+    dir: ${data}/mrms                       # must match the analysis config's ls3dvar.refc_source.dir
+    args: ""                                # e.g. "--compare-ref"
+    python: null                            # needs scipy + pygrib | grib2io | cfgrib
+  background:
+    enabled: false                          # only for background.source forecast_dir: runs
+                                            #   run_forecasts into background.forecast_dir
+                                            #   (cycled backgrounds are made inside the cycles)
+
+# -----------------------------------------------------------------------------------------------
+# post: diagnostic plots after the cycles (configs written to <exp>/post/*.yaml from the
+# templates with this experiment's paths, cycles, leads; then `set:` on top).
+#   python -m ls3dvar.cli.run_cycles post exp.yaml [--only plots fields diagnostics threat]
+# -----------------------------------------------------------------------------------------------
+post:
+  dir: null                                 # null = <exp>/figures
+  python: null                              # needs numpy pandas matplotlib scipy xarray netCDF4
+  plots:                                    # plot_ls3dvar_cycling.py
+    enabled: false
+    script: ${data}/plot_ls3dvar_cycling.py
+    template: ${data}/plot_ls3dvar.yaml
+    only: [verification, precip]            # + increment forecast_impact spectra (many maps)
+    verification_csv: auto                  # auto = verification_heldout.csv when holding out
+    set: {}                                 # any key of the template, e.g. {variables: [T2M, REFC]}
+  fields:                                   # HRRR | MRMS | background | analysis panels, every lead
+    enabled: false
+    script: ${data}/plot_ls3dvar_cycling.py
+    template: ${data}/fine_fields.yaml
+    set: {}
+  diagnostics:                              # ls3dvar_diagnostics.py: with vs without DA
+    enabled: false
+    script: ${data}/ls3dvar_diagnostics.py
+    template: ${data}/diag_fine_da.yaml
+    only: null                              # e.g. [stations, precip]
+    set: {}                                 # e.g. {hrrr_benchmark: false, bootstrap: 0}
+  threat:                                   # plot_mrms_threat.py (reads the diagnostics config)
+    enabled: false
+    script: ${data}/plot_mrms_threat.py
+    hrrr: false                             # + native HRRR REFC forecast (network)
+
+# -----------------------------------------------------------------------------------------------
+# push: upload after the pipeline (also on its own: run_cycles push exp.yaml [--dry-run]).
+# `check` / `push` verify the aws CLI and credentials (aws sts get-caller-identity) first.
+# -----------------------------------------------------------------------------------------------
+push:
+  enabled: false
+  dest: null                                # s3://bucket/prefix
+  what: all                                 # all = the whole paths.data folder (inputs + experiments)
+                                            # experiment = only <exp>  -> dest/experiments/<name>
+  tool: aws
+  args: ""                                  # extra `aws s3 sync` flags, e.g. "--storage-class STANDARD_IA"
+  exclude: ["*/driver.pid", "*/progress.tmp", "*/__pycache__/*"]
