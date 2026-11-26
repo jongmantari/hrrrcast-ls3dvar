@@ -7,14 +7,20 @@
 # Override the env name with HRRRCAST_ENV if needed.
 HRRRCAST_ENV="${HRRRCAST_ENV:-hrrrcast}"
 
-if ! command -v conda >/dev/null 2>&1; then
-    echo "ERROR: conda not found on PATH; run install_env_mac.sh first." >&2
-    return 1 2>/dev/null || exit 1
-fi
+# HRRRCAST_NO_CONDA=1: the right python env is already active (container: micromamba base);
+# skip conda discovery/activation and use the current python.
+if [[ -n "${HRRRCAST_NO_CONDA:-}" ]]; then
+    echo "env_mac.sh: HRRRCAST_NO_CONDA set, using $(command -v python)" >&2
+else
+    if ! command -v conda >/dev/null 2>&1; then
+        echo "ERROR: conda not found on PATH; run install_env_mac.sh first." >&2
+        return 1 2>/dev/null || exit 1
+    fi
 
-# shellcheck disable=SC1091
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$HRRRCAST_ENV"
+    # shellcheck disable=SC1091
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$HRRRCAST_ENV"
+fi
 
 # Keras 2 shim: enable it ONLY when tf-keras is actually installed. TF >= 2.16
 # defaults to Keras 3; forcing TF_USE_LEGACY_KERAS=1 without the tf_keras package

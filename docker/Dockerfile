@@ -24,7 +24,8 @@ ENV HRRRCAST_REPO=/opt/hrrrcast \
     TF_FORCE_GPU_ALLOW_GROWTH=true \
     PYTHONUNBUFFERED=1 \
     MODELS=/models \
-    HOME=/tmp
+    HOME=/tmp \
+    HRRRCAST_NO_CONDA=1
 WORKDIR /opt/hrrrcast
 VOLUME ["/models", "/data", "/cache"]
 USER $MAMBA_USER
