@@ -1,0 +1,105 @@
+# =====================================================
+# IODA obs database for HRRRCast LS-3DVar cycling
+#   python build_obsdb_cycles.py obsdb_cycles.yaml
+# Output: <output.root>/<obs_type>/<YYYYMMDDTHHZ>/<output_pattern>
+# =====================================================
+
+cycles:
+  start: ${START_CYC}
+  end: ${END_CYC}
+  interval_hours: 1
+
+window:
+  #
+  # obs kept if |dateTime - cycle| <= half_width_minutes
+  #
+  half_width_minutes: 30
+  #
+  # raw files whose NAME time is within +/- search_hours of the cycle are
+  # opened (raw files cover multi-hour windows, e.g. ASOS "00Z" = 22-00Z)
+  #
+  search_hours: 2
+
+#
+# none    : keep every report in the window (exact duplicates removed)
+# nearest : one report per station, nearest to the cycle time
+#           (LS-3DVar also thins per variable; keep "none" for LETKF/4D use)
+#
+thinning: nearest
+
+#
+# a location is kept if ANY of these is valid (was: all of them)
+#
+assim_vars:
+  - airTemperatureAt2M
+  - dewPointTemperatureAt2M
+  - relativeHumidityAt2M
+  - windEastwardAt10M
+  - windNorthwardAt10M
+  - stationPressure
+
+#
+# crop to the HRRRCast subdomain (lats/lons from any hrrr npz on that grid)
+#
+domain:
+  enabled: true
+  npz: ${REF_NPZ}
+  margin_deg: 0.05
+
+output:
+  root: ${DATA}/obsdb
+
+obs_types:
+  - asos
+  - tempest
+  - grenade
+
+obs:
+
+  asos:
+    input_dir: ${ASOS_IODA_DIR}
+    file_pattern: "iem_asos_obs_%Y%m%dT%H0000Z.nc4"
+    output_pattern: "asos_obs_%Y%m%dT%HZ.nc4"
+    elevation:
+      source: file                    # stationElevation present in ASOS files
+    obserror:
+      airTemperatureAt2M: 1.0
+      dewPointTemperatureAt2M: 1.5
+      windEastwardAt10M: 1.5
+      windNorthwardAt10M: 1.5
+      stationPressure: 50.0
+
+  tempest:
+    # CHECK: input_dir / file_pattern (glob '*' allowed after strftime)
+    input_dir: ${DATA}/ioda/tempest
+    file_pattern: "*%Y%m%dT%H*.nc4"
+    output_pattern: "tempest_obs_%Y%m%dT%HZ.nc4"
+    elevation:
+      source: height_minus            # stationElevation = height - 2 m (sensor)
+      value: 2.0
+    obserror:
+      airTemperatureAt2M: 1.5
+      dewPointTemperatureAt2M: 2.0
+      windEastwardAt10M: 2.0
+      windNorthwardAt10M: 2.0
+      stationPressure: 75.0
+
+  grenade:
+    # CHECK: input_dir / file_pattern
+    input_dir: ${DATA}/ioda/grenade
+    file_pattern: "*%Y%m%dT%H*.nc4"
+    output_pattern: "grenade_obs_%Y%m%dT%HZ.nc4"
+    elevation:
+      #
+      # previous script forced a constant 5 m. With the station-height
+      # pressure correction that is wrong for any inland site; use height
+      # if the files have it, constant only as a last resort.
+      #
+      source: height_minus
+      value: 2.0
+    obserror:
+      airTemperatureAt2M: 1.5
+      dewPointTemperatureAt2M: 2.0
+      windEastwardAt10M: 2.0
+      windNorthwardAt10M: 2.0
+      stationPressure: 75.0

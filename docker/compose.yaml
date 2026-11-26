@@ -16,8 +16,8 @@ services:
       ASOS_SKIP_SYNC: ${ASOS_SKIP_SYNC:-}
       SKIP_PREP: ${SKIP_PREP:-}
     volumes:
-      - ${MODELS_DIR:?set MODELS_DIR to the net-diffusion folder (model.keras, normalize-stats.nc)}:/models:ro
-      - ${DATA_DIR:?set DATA_DIR to a host folder for runs/obsdb/mrms/ioda/experiments}:/data
+      - ${MODELS_DIR:-./MODELS_DIR-not-set}:/models:ro
+      - ${DATA_DIR:-./DATA_DIR-not-set}:/data
       - ${NV_CACHE:-~/.nv/ComputeCache}:/cache/nv     # reuse compiled Blackwell kernels (else ~30 min first run)
     shm_size: 8g
     deploy:

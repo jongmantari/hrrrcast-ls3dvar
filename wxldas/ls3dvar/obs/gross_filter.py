@@ -180,6 +180,12 @@ class ObservationFilter:
             innovations
         )
 
+        # no observations of this variable in the window (e.g. a network without dew
+        # point): report nan instead of failing in np.percentile on an empty array
+        if innovations.size == 0:
+            return {"count": 0, **{k: float("nan") for k in
+                                   ("mean", "rms", "p50", "p75", "p90", "p95", "p99")}}
+
         return {
             "count":
                 len(innovations),

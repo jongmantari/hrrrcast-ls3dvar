@@ -22,6 +22,7 @@ DOMFILE=${DOMAIN_FILE:-$REPO/domains/$DOMAIN.env}
 set -a; source "$DOMFILE"; set +a
 export SUB_BBOX SUB_HALO=${SUB_HALO:-40}
 export RUN_BASE=${RUN_BASE:-$DATA/runs/$DOMAIN}
+export ASOS_IODA_DIR=${ASOS_IODA_DIR:-$DATA/ioda/asos/$DOMAIN}   # per domain; tempest/grenade shared
 mkdir -p "$RUN_BASE" "$DATA/obsdb/$DOMAIN" "$DATA/ioda" "${CUDA_CACHE_PATH:-/cache/nv}"
 
 # ---- model weights: /models -> $REPO/net-diffusion (run_cycle.sh reads it there; weights are not in the image)
@@ -92,7 +93,7 @@ do_asos() {
   # mirror layout required by iem_to_ioda: $WXBOX_DATA_ROOT/datasets/iem-asos
   export WXBOX_DATA_ROOT=${WXBOX_DATA_ROOT:-$DATA/wxbox}
   export IEM_ASOS_ROOT=${IEM_ASOS_ROOT:-$WXBOX_DATA_ROOT/datasets/iem-asos}
-  mkdir -p "$IEM_ASOS_ROOT" "$DATA/ioda/asos"
+  mkdir -p "$IEM_ASOS_ROOT" "$ASOS_IODA_DIR"
   if [[ -z ${ASOS_SKIP_SYNC:-} ]]; then
     for net in ${ASOS_NETWORKS:?set ASOS_NETWORKS in $DOMFILE}; do
       $ASOS_SYNC_CMD --network "$net" --local-root "$IEM_ASOS_ROOT" $ASOS_SYNC_ARGS
@@ -102,7 +103,7 @@ do_asos() {
   [[ -n $npz ]] || { echo "no staged npz for $1 (run 'stage' first)" >&2; exit 3; }
   local bb; bb=$(npz_bbox "$npz"); echo "[asos] bbox (S W N E) $bb"
   $ASOS_IODA_CMD --start "$1" --end "$2" --step 1h --half-width "${ASOS_HALF_WIDTH:-30m}" \
-      --bbox $bb --outdir "$DATA/ioda/asos" --at-level-names
+      --bbox $bb --outdir "$ASOS_IODA_DIR" --at-level-names
 }
 
 do_obsdb() {

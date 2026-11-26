@@ -105,6 +105,7 @@ from ls3dvar.obs.operators import (  # noqa: E402
 from ls3dvar.analysis.diagnostics import plot_convergence  # noqa: E402
 from ls3dvar.obs.types import SurfaceObservationSet  # noqa: E402
 from ls3dvar.obs.grid import build_station_indices  # noqa: E402
+from ls3dvar.obs.diag import ObsDiag, write_refc_diag  # noqa: E402
 
 OUTER_LOOPS = 2
 INNER_MAXITER = 40
@@ -426,6 +427,8 @@ def main():
                 wind_ops[key] = make_wind_operator(comp, iu, iv, su, sv, **cand[mode])
 
     obs_qc = ObsQC(cfg)
+    diag = ObsDiag()                      # per-observation O-B / O-A (obs_diag_<cycle>.nc)
+    save_diag = bool((cfg.get("outputs", {}) or {}).get("save_obs_diag", True))
     if obs_qc.enabled:
         banner("OBS QC (obs_qc): blacklist / network check / buddy check / error scale")
     data = {}
@@ -457,6 +460,8 @@ def main():
                       f"rms at fit {rms(d_ - g * dzz):.3f}; standard atmosphere +6.5)")
         hx = op(x_b_tf, obs[f"{key}_y"], obs[f"{key}_x"])
         innov = (hx - y).numpy()
+        diag.add(key, var, obs_list, obs[f"{key}_y"], obs[f"{key}_x"], op, err,
+                 obs_qc.sigmas(var, obs_list, err) if obs_qc.enabled else err)
 
         banner(f"{var}: O-B INNOVATIONS (n={len(obs_list)})")
         print(obs_filter.innovation_stats(innov))
@@ -470,6 +475,8 @@ def main():
 
         if obs_filter.enabled:
             kept = obs_filter.apply(var, obs_list, innov)
+            diag.reject_gross(key, obs_list, kept,
+                              (obs_filter.filter_cfg.get("thresholds") or {}).get(var))
             if len(kept) != len(obs_list):
                 ix_ = reindex(kept)
                 obs[f"{key}_y"], obs[f"{key}_x"] = ix_["iy"], ix_["ix"]
@@ -482,7 +489,9 @@ def main():
             y, s = obs_vectors(obs_list, err)
             innov = (op(x_b_tf, obs[f"{key}_y"], obs[f"{key}_x"]) - y).numpy()
             ObsQC.network_summary(var, obs_list, innov)
+            n_rej0 = len(obs_qc.rejected)
             kept = obs_qc.apply(var, obs_list, innov, err)
+            diag.reject_qc(key, obs_list, kept, obs_qc.rejected[n_rej0:])
             if len(kept) != len(obs_list):
                 ix_ = reindex(kept)
                 obs[f"{key}_y"], obs[f"{key}_x"] = ix_["iy"], ix_["ix"]
@@ -830,6 +839,30 @@ def main():
         srep = sb_dir / f"station_report_{sfx}.csv"
         pd.DataFrame(srows).to_csv(srep, index=False)
         print(f"  station report -> {srep}")
+
+        # per-observation diagnostics: every report after the time window, any QC fate
+        if save_diag:
+            cyc = (np.datetime64(str(hrrr["init_datetime"]).replace(" ", "T"), "h")
+                   .astype(object).strftime("%Y%m%dT%HZ"))
+            dattrs = dict(cycle=cyc, analysis=tag, sigma_b=sigma_b,
+                          holdout=args.holdout_stations or args.fold or args.holdout)
+            f_obs, f_refc = sb_dir / f"obs_diag_{cyc}.nc", sb_dir / f"refc_diag_{cyc}.nc"
+            ddf = diag.write(f_obs, x_b, x_a, held_flag, attrs=dattrs)
+            rsum = write_refc_diag(f_refc, pseudo, x_b, x_a, po_box, hrrr["lats"], hrrr["lons"],
+                                   x_b.shape[1:3], attrs=dattrs)
+            if args.analysis_out:
+                cdir = Path(args.analysis_out).parent
+                for f_ in (f_obs, f_obs.with_suffix(".csv"), f_refc):
+                    if f_.exists():
+                        shutil.copyfile(f_, cdir / f_.name)
+            print(f"  obs diagnostics -> {f_obs}  ({len(ddf)} reports)")
+            if len(ddf):
+                for (vk, qc_), g_ in ddf.groupby(["variableKey", "EffectiveQC"]):
+                    print(f"    {vk:4s} QC={qc_}  n={len(g_):4d}  "
+                          f"O-B rms={np.sqrt(np.mean(g_.ombg ** 2)):8.3f}  "
+                          f"O-A rms={np.sqrt(np.mean(g_.oman ** 2)):8.3f}")
+            for nm_, r_ in (rsum or {}).items():
+                print(f"    {nm_}  n={r_['n']}  O-B rms={r_['omb_rms']:.3f}  O-A rms={r_['oma_rms']:.3f}")
 
         if truth is not None:
             print(f"  vs TRUTH   rms(bg-truth) -> rms(an-truth)   "
