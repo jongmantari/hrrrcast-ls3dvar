@@ -2,7 +2,7 @@
 FROM mambaorg/micromamba:1.5.10-jammy
 
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive TZ=Etc/UTC apt-get install -y --no-install-recommends \
       git ca-certificates curl tzdata && rm -rf /var/lib/apt/lists/*
 
 COPY --chown=$MAMBA_USER:$MAMBA_USER aws/conda-linux-64.lock /tmp/env.lock
